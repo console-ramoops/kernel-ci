@@ -1,0 +1,222 @@
+name: Build Kernel
+
+env:
+  OUT_DIR: "${{ github.workspace }}/out"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  set-repos:
+    name: "[>] Parse repos.json"
+    runs-on: ubuntu-latest
+    outputs:
+      repos: ${{ steps.generate-matrix.outputs.repos }}
+      builddate: ${{ steps.generate-builddate.outputs.builddate }}
+    steps:
+      - name: "[~] Checkout"
+        uses: actions/checkout@v3
+
+      - name: "[~] Generate Matrix"
+        id: generate-matrix
+        run: |
+          echo "repos<<EOF" >> $GITHUB_OUTPUT
+          jq -s '[.[][]]' .github/workflows/repos*.json >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      - name: "[~] Set builddate"
+        id: generate-builddate
+        run: echo "builddate=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+
+  build-kernel:
+    name: "[>] Build kernel"
+    runs-on: ubuntu-22.04
+    needs:
+      - set-repos
+    strategy:
+      max-parallel: 4
+      fail-fast: false
+      matrix:
+        repos: ${{ fromJSON(needs.set-repos.outputs.repos) }}
+    env:
+      WORKSPACE: ${{ github.workspace }}
+      builddate: "${{ needs.set-repos.outputs.builddate }}"
+      KBUILD_BUILD_USER: "builder"
+      KBUILD_BUILD_HOST: "android"
+      KERNEL_NAME: ${{ matrix.repos.kernelSource.name }}
+      KERNEL_REPO: ${{ matrix.repos.kernelSource.repo }}
+      KERNEL_BRANCH: ${{ matrix.repos.kernelSource.branch }}
+      KERNEL_DEVICE: ${{ matrix.repos.kernelSource.device }}
+      DEFCONFIG_NAME: ${{ matrix.repos.kernelSource.defconfig }}
+      withKernelSU: ${{ matrix.repos.withKernelSU }}
+      useAnykernel: ${{ matrix.repos.AnyKernel3.use }}
+      release: ${{ matrix.repos.AnyKernel3.release }}
+    steps:
+      - name: "[+] Install prerequisites"
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python2 python3 libarchive-tools
+
+      - name: "[+] Setup Anykernel3"
+        env:
+          params: "${{ toJSON(matrix.repos.AnyKernel3) }}"
+        run: |
+          ANYKERNEL_REPO=$(echo $params | jq -r ".repo")
+          ANYKERNEL_BRANCH=$(echo $params | jq -r ".branch")
+          git clone --recursive --depth=1 -j $(nproc) --branch $ANYKERNEL_BRANCH $ANYKERNEL_REPO AnyKernel3
+
+      - name: "[+] Clone kernel source"
+        run: |
+          git clone --recursive --depth=1 -j $(nproc) --branch $KERNEL_BRANCH $KERNEL_REPO $KERNEL_NAME
+
+      - name: "[+] Get toolchains"
+        env:
+          toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
+        run: |
+          toolchains_num="$(echo $toolchains | jq 'length')"
+          for ((i=0;i<toolchains_num;i++)); do
+            toolchain_name=$(echo $toolchains | jq -r ".[$i].name")
+            toolchain_repo=$(echo $toolchains | jq -r ".[$i].repo")
+            toolchain_branch=$(echo $toolchains | jq -r ".[$i].branch")
+
+            git clone --recursive --depth=1 -j $(nproc) --branch $toolchain_branch $toolchain_repo $toolchain_name
+
+            jq -r ".[$i].binPath[] | tostring" <<< "$toolchains" | while read -r bin_path; do
+              echo "$WORKSPACE/$toolchain_name/$bin_path" >> $GITHUB_PATH
+            done
+          done
+
+      - name: "[~] Set args"
+        id: generate-args
+        env:
+          params: "${{ toJSON(matrix.repos.params) }}"
+          THREAD: $(nproc --all)
+        run: |
+          ARCH=$(echo $params | jq -r ".ARCH")
+          CC=$(echo $params | jq -r ".CC")
+
+          args="-j${{ env.THREAD }}"
+
+          if [ -n "${{ env.OUT_DIR }}" ]; then
+            mkdir -p ${{ env.OUT_DIR }} && args="$args O=${{ env.OUT_DIR }}"
+          fi
+          if [ -n "$ARCH" ]; then
+            args="$args ARCH=$ARCH"
+          fi
+          if [ -n "$CC" ]; then
+            args="$args CC=${{ env.WORKSPACE }}/$CC"
+          fi
+          while read -r externalCommand; do
+            args="$args $externalCommand"
+          done < <(jq -r '.externalCommand | to_entries[] | "\(.key)=${{ env.WORKSPACE }}/\(.value)"' <<< "$params")
+
+          echo "ARCH=$ARCH" >> $GITHUB_OUTPUT
+          echo "args=$args" >> $GITHUB_OUTPUT
+
+      - name: "[!] Setup KernelSU"
+        working-directory: ${{ env.KERNEL_NAME }}
+        env:
+          arch: ${{ steps.generate-args.outputs.ARCH }}
+        if: ${{ env.withKernelSU == 'true' }}
+        run: |
+          if [ -d "./KernelSU" ]; then
+            rm -rf "./KernelSU"
+          fi
+          if [ -d "./drivers/kernelsu" ]; then
+            rm -rf "./drivers/kernelsu"
+          fi
+
+          curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -
+
+          echo -e "CONFIG_KPROBES=y" >> arch/${{ env.arch }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo -e "CONFIG_HAVE_KPROBES=y" >> arch/${{ env.arch }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo -e "CONFIG_KPROBE_EVENTS=y" >> arch/${{ env.arch }}/configs/${{ env.DEFCONFIG_NAME }}
+
+          git clone https://github.com/devnoname120/kernelsu-coccinelle
+          ./kernelsu-coccinelle/scope-minimized-hooks/apply.sh .
+          rm -rf ./kernelsu-coccinelle/
+
+      - name: "[~] Make defconfig"
+        working-directory: ${{ env.KERNEL_NAME }}
+        env:
+          args: ${{ steps.generate-args.outputs.args }}
+          arch: ${{ steps.generate-args.outputs.ARCH }}
+        run: |
+          make ${{ env.args }} ${{ env.DEFCONFIG_NAME }}
+
+      - name: "[>] Build kernel"
+        working-directory: ${{ env.KERNEL_NAME }}
+        env:
+          args: ${{ steps.generate-args.outputs.args }}
+          KBUILD_BUILD_USER: "builder"
+          KBUILD_BUILD_HOST: "android"
+        run: |
+          make ${args}
+
+      - name: "[~] Upload Image"
+        uses: actions/upload-artifact@v4
+        env:
+          arch: ${{ steps.generate-args.outputs.ARCH }}
+        with:
+          name: Image-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ env.builddate }}
+          path: ${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/Image
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: "[~] Upload Image.gz"
+        uses: actions/upload-artifact@v4
+        env:
+          arch: ${{ steps.generate-args.outputs.ARCH }}
+        with:
+          name: Image.gz-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ env.builddate }}
+          path: ${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/Image.gz
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: "[~] Upload dtb"
+        uses: actions/upload-artifact@v4
+        env:
+          arch: ${{ steps.generate-args.outputs.ARCH }}
+        with:
+          name: dtb-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ env.builddate }}
+          path: ${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/dtb
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: "[~] Upload dtbo.img"
+        uses: actions/upload-artifact@v4
+        env:
+          arch: ${{ steps.generate-args.outputs.ARCH }}
+        with:
+          name: dtbo.img-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ env.builddate }}
+          path: ${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/dtbo.img
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: "[~] Pack AnyKernel3.zip"
+        if: ${{ env.useAnykernel == 'true' }}
+        env:
+          arch: ${{ steps.generate-args.outputs.ARCH }}
+          anykernel: "${{ env.WORKSPACE }}/${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}_${{ env.builddate }}"
+        run: |
+          if [ -e "${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/Image.gz-dtb" ]; then
+            cp -f ${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/Image.gz-dtb ./AnyKernel3/
+          fi
+
+          cd AnyKernel3/
+          zip -q -r "${{ env.anykernel }}.zip" *
+
+      - name: "[~] Upload AnyKernel3"
+        uses: actions/upload-artifact@v4
+        if: ${{ env.useAnykernel == 'true' }}
+        with:
+          name: "${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}_${{ env.builddate }}"
+          path: AnyKernel3/*
+
+      - name: "[~] Create GitHub Release"
+        continue-on-error: true
+        uses: softprops/action-gh-release@v1
+        if: ${{ env.useAnykernel == 'true' && env.release == 'true' }}
+        with:
+          tag_name: v${{ env.builddate }}.${{ github.run_number }}
+          files: "${{ env.WORKSPACE }}/${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}_${{ env.builddate }}.zip"
+          generate_release_notes: true

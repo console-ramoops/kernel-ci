@@ -1,0 +1,34 @@
+[
+  {
+    "kernelSource": {
+      "name": "kernel_xiaomi_santoni",
+      "repo": "https://github.com/console-ramoops/kernel_xiaomi_santoni",
+      "branch": "oc/non-erofs",
+      "device": "santoni",
+      "defconfig": "santoni_defconfig"
+    },
+    "withKernelSU": true,
+    "toolchains": [
+      {
+        "repo": "https://gitlab.com/clangsantoni/zyc_clang",
+        "branch": "14",
+        "name": "zyc_clang",
+        "binPath": ["bin"]
+      }
+    ],
+    "params": {
+      "ARCH": "arm64",
+      "CC": "zyc_clang/bin/clang",
+      "externalCommand": {
+        "CROSS_COMPILE": "zyc_clang/bin/aarch64-linux-gnu-",
+        "CROSS_COMPILE_ARM32": "zyc_clang/bin/arm-linux-gnueabi-"
+      }
+    },
+    "AnyKernel3": {
+      "use": true,
+      "release": true,
+      "repo": "https://github.com/Akitlove/AnyKernel3",
+      "branch": "master"
+    }
+  }
+]
