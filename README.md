@@ -18,61 +18,13 @@ Build Android kernels with GitHub Actions. Reads kernel sources from a configura
 | Pack AnyKernel3.zip  | Package kernel into flashable zip                     |
 | Create GitHub Release| Publish release with kernel zip                       |
 
-## Configuration
-
-Kernel configs live in `.github/workflows/repos.json`. Each entry:
-
-```json
-{
-  "kernelSource": {
-    "name": "kernel-name",
-    "repo": "https://github.com/user/repo",
-    "branch": "branch",
-    "device": "device",
-    "defconfig": "device_defconfig"
-  },
-  "withKernelSU": true,
-  "toolchains": [
-    {
-      "repo": "https://gitlab.com/user/toolchain",
-      "branch": "main",
-      "name": "toolchain-name",
-      "binPath": ["bin"]
-    }
-  ],
-  "params": {
-    "ARCH": "arm64",
-    "CC": "toolchain-name/bin/clang",
-    "externalCommand": {
-      "CROSS_COMPILE": "toolchain-name/bin/aarch64-linux-gnu-",
-      "CROSS_COMPILE_ARM32": "toolchain-name/bin/arm-linux-gnueabi-"
-    }
-  },
-  "AnyKernel3": {
-    "use": true,
-    "release": true,
-    "repo": "https://github.com/user/AnyKernel3",
-    "branch": "master"
-  }
-}
-```
-
-### Fields
-
-| Field          | Description                                                |
-| -------------- | ---------------------------------------------------------- |
-| `kernelSource` | Kernel repo name, URL, branch, device, defconfig           |
-| `withKernelSU` | Enable KernelSU patching (true/false)                      |
-| `toolchains`   | Array of toolchain repos with branch, name, binPath        |
-| `params`       | ARCH, CC, and externalCommand (CROSS_COMPILE, etc.)        |
-| `AnyKernel3`   | Flashable zip config: use, release, repo, branch           |
-
 ## Usage
 
 1. Fork this repo
-2. Edit `.github/workflows/repos.json` with your kernel config
+2. Edit `.github/workflows/repos.json` with toolchain, KernelSU, and AnyKernel3 settings
 3. Go to Actions > Build Kernel > Run workflow
-4. Download artifacts when complete
+4. Fill in the kernel source fields in the form (name, repo, branch, device, defconfig)
+5. Download artifacts when complete
 
 ## Local Testing
 

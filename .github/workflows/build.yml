@@ -5,73 +5,74 @@ env:
 
 on:
   workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: "Kernel name (e.g. kernel_xiaomi_santoni)"
+        required: true
+      kernel_repo:
+        description: "Kernel source repo URL"
+        required: true
+      kernel_branch:
+        description: "Kernel branch"
+        required: true
+      device:
+        description: "Device codename (e.g. santoni)"
+        required: true
+      defconfig:
+        description: "Defconfig name (e.g. santoni_defconfig)"
+        required: true
+      withKernelSU:
+        description: "Enable KernelSU patching"
+        required: true
+        type: boolean
+        default: true
 
 jobs:
-  set-repos:
-    name: "[>] Parse repos.json"
-    runs-on: ubuntu-latest
-    outputs:
-      repos: ${{ steps.generate-matrix.outputs.repos }}
-      builddate: ${{ steps.generate-builddate.outputs.builddate }}
-    steps:
-      - name: "[~] Checkout"
-        uses: actions/checkout@v3
-
-      - name: "[~] Generate Matrix"
-        id: generate-matrix
-        run: |
-          echo "repos<<EOF" >> $GITHUB_OUTPUT
-          jq -s '[.[][]]' .github/workflows/repos*.json >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-      - name: "[~] Set builddate"
-        id: generate-builddate
-        run: echo "builddate=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
-
   build-kernel:
-    name: "[>] Build kernel"
+    name: "⚡ Build kernel"
     runs-on: ubuntu-22.04
-    needs:
-      - set-repos
-    strategy:
-      max-parallel: 4
-      fail-fast: false
-      matrix:
-        repos: ${{ fromJSON(needs.set-repos.outputs.repos) }}
     env:
       WORKSPACE: ${{ github.workspace }}
-      builddate: "${{ needs.set-repos.outputs.builddate }}"
       KBUILD_BUILD_USER: "builder"
       KBUILD_BUILD_HOST: "android"
-      KERNEL_NAME: ${{ matrix.repos.kernelSource.name }}
-      KERNEL_REPO: ${{ matrix.repos.kernelSource.repo }}
-      KERNEL_BRANCH: ${{ matrix.repos.kernelSource.branch }}
-      KERNEL_DEVICE: ${{ matrix.repos.kernelSource.device }}
-      DEFCONFIG_NAME: ${{ matrix.repos.kernelSource.defconfig }}
-      withKernelSU: ${{ matrix.repos.withKernelSU }}
-      useAnykernel: ${{ matrix.repos.AnyKernel3.use }}
-      release: ${{ matrix.repos.AnyKernel3.release }}
+      KERNEL_NAME: ${{ inputs.kernel_name }}
+      KERNEL_REPO: ${{ inputs.kernel_repo }}
+      KERNEL_BRANCH: ${{ inputs.kernel_branch }}
+      KERNEL_DEVICE: ${{ inputs.device }}
+      DEFCONFIG_NAME: ${{ inputs.defconfig }}
     steps:
-      - name: "[+] Install prerequisites"
+      - name: "⟡ checkout"
+        uses: actions/checkout@v4
+
+      - name: "⟡ load config"
+        id: config
+        run: |
+          CONFIG=".github/workflows/repos.json"
+          echo "builddate=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+          echo "withKernelSU=${{ inputs.withKernelSU }}" >> $GITHUB_OUTPUT
+          echo "useAnykernel=$(jq -r '.AnyKernel3.use' $CONFIG)" >> $GITHUB_OUTPUT
+          echo "release=$(jq -r '.AnyKernel3.release' $CONFIG)" >> $GITHUB_OUTPUT
+
+      - name: "✦ install deps"
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential bc curl git zip ftp gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libssl-dev lftp zstd wget libfl-dev python2 python3 libarchive-tools
 
-      - name: "[+] Setup Anykernel3"
-        env:
-          params: "${{ toJSON(matrix.repos.AnyKernel3) }}"
+      - name: "✦ clone anykernel3"
         run: |
-          ANYKERNEL_REPO=$(echo $params | jq -r ".repo")
-          ANYKERNEL_BRANCH=$(echo $params | jq -r ".branch")
+          CONFIG=".github/workflows/repos.json"
+          ANYKERNEL_REPO=$(jq -r '.AnyKernel3.repo' $CONFIG)
+          ANYKERNEL_BRANCH=$(jq -r '.AnyKernel3.branch' $CONFIG)
           git clone --recursive --depth=1 -j $(nproc) --branch $ANYKERNEL_BRANCH $ANYKERNEL_REPO AnyKernel3
 
-      - name: "[+] Clone kernel source"
+      - name: "✦ clone kernel source"
         run: |
           git clone --recursive --depth=1 -j $(nproc) --branch $KERNEL_BRANCH $KERNEL_REPO $KERNEL_NAME
 
-      - name: "[+] Get toolchains"
-        env:
-          toolchains: "${{ toJSON(matrix.repos.toolchains) }}"
+      - name: "✦ fetch toolchains"
         run: |
+          CONFIG=".github/workflows/repos.json"
+          toolchains=$(jq -c '.toolchains' $CONFIG)
           toolchains_num="$(echo $toolchains | jq 'length')"
           for ((i=0;i<toolchains_num;i++)); do
             toolchain_name=$(echo $toolchains | jq -r ".[$i].name")
@@ -85,16 +86,17 @@ jobs:
             done
           done
 
-      - name: "[~] Set args"
+      - name: "⚙ configure build"
         id: generate-args
-        env:
-          params: "${{ toJSON(matrix.repos.params) }}"
-          THREAD: $(nproc --all)
         run: |
+          CONFIG=".github/workflows/repos.json"
+          params=$(jq -c '.params' $CONFIG)
+          THREAD=$(nproc --all)
+
           ARCH=$(echo $params | jq -r ".ARCH")
           CC=$(echo $params | jq -r ".CC")
 
-          args="-j${{ env.THREAD }}"
+          args="-j$THREAD"
 
           if [ -n "${{ env.OUT_DIR }}" ]; then
             mkdir -p ${{ env.OUT_DIR }} && args="$args O=${{ env.OUT_DIR }}"
@@ -112,12 +114,12 @@ jobs:
           echo "ARCH=$ARCH" >> $GITHUB_OUTPUT
           echo "args=$args" >> $GITHUB_OUTPUT
 
-      - name: "[!] Setup KernelSU"
+      - name: "⚡ patch KernelSU"
         working-directory: ${{ env.KERNEL_NAME }}
-        env:
-          arch: ${{ steps.generate-args.outputs.ARCH }}
-        if: ${{ env.withKernelSU == 'true' }}
+        if: ${{ steps.config.outputs.withKernelSU == 'true' }}
         run: |
+          arch=${{ steps.generate-args.outputs.ARCH }}
+
           if [ -d "./KernelSU" ]; then
             rm -rf "./KernelSU"
           fi
@@ -127,96 +129,82 @@ jobs:
 
           curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -
 
-          echo -e "CONFIG_KPROBES=y" >> arch/${{ env.arch }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "CONFIG_HAVE_KPROBES=y" >> arch/${{ env.arch }}/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "CONFIG_KPROBE_EVENTS=y" >> arch/${{ env.arch }}/configs/${{ env.DEFCONFIG_NAME }}
+          echo -e "CONFIG_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
+          echo -e "CONFIG_HAVE_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
+          echo -e "CONFIG_KPROBE_EVENTS=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
 
           git clone https://github.com/devnoname120/kernelsu-coccinelle
           ./kernelsu-coccinelle/scope-minimized-hooks/apply.sh .
           rm -rf ./kernelsu-coccinelle/
 
-      - name: "[~] Make defconfig"
+      - name: "⚙ make defconfig"
         working-directory: ${{ env.KERNEL_NAME }}
-        env:
-          args: ${{ steps.generate-args.outputs.args }}
-          arch: ${{ steps.generate-args.outputs.ARCH }}
         run: |
-          make ${{ env.args }} ${{ env.DEFCONFIG_NAME }}
+          make ${{ steps.generate-args.outputs.args }} ${{ env.DEFCONFIG_NAME }}
 
-      - name: "[>] Build kernel"
+      - name: "⚒ compile kernel"
         working-directory: ${{ env.KERNEL_NAME }}
-        env:
-          args: ${{ steps.generate-args.outputs.args }}
-          KBUILD_BUILD_USER: "builder"
-          KBUILD_BUILD_HOST: "android"
         run: |
-          make ${args}
+          make ${{ steps.generate-args.outputs.args }}
 
-      - name: "[~] Upload Image"
+      - name: "↑ upload Image"
         uses: actions/upload-artifact@v4
-        env:
-          arch: ${{ steps.generate-args.outputs.ARCH }}
         with:
-          name: Image-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ env.builddate }}
-          path: ${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/Image
+          name: Image-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ steps.config.outputs.builddate }}
+          path: ${{ env.OUT_DIR }}/arch/${{ steps.generate-args.outputs.ARCH }}/boot/Image
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: "[~] Upload Image.gz"
+      - name: "↑ upload Image.gz"
         uses: actions/upload-artifact@v4
-        env:
-          arch: ${{ steps.generate-args.outputs.ARCH }}
         with:
-          name: Image.gz-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ env.builddate }}
-          path: ${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/Image.gz
+          name: Image.gz-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ steps.config.outputs.builddate }}
+          path: ${{ env.OUT_DIR }}/arch/${{ steps.generate-args.outputs.ARCH }}/boot/Image.gz
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: "[~] Upload dtb"
+      - name: "↑ upload dtb"
         uses: actions/upload-artifact@v4
-        env:
-          arch: ${{ steps.generate-args.outputs.ARCH }}
         with:
-          name: dtb-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ env.builddate }}
-          path: ${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/dtb
+          name: dtb-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ steps.config.outputs.builddate }}
+          path: ${{ env.OUT_DIR }}/arch/${{ steps.generate-args.outputs.ARCH }}/boot/dtb
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: "[~] Upload dtbo.img"
+      - name: "↑ upload dtbo.img"
         uses: actions/upload-artifact@v4
-        env:
-          arch: ${{ steps.generate-args.outputs.ARCH }}
         with:
-          name: dtbo.img-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ env.builddate }}
-          path: ${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/dtbo.img
+          name: dtbo.img-${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ steps.config.outputs.builddate }}
+          path: ${{ env.OUT_DIR }}/arch/${{ steps.generate-args.outputs.ARCH }}/boot/dtbo.img
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: "[~] Pack AnyKernel3.zip"
-        if: ${{ env.useAnykernel == 'true' }}
-        env:
-          arch: ${{ steps.generate-args.outputs.ARCH }}
-          anykernel: "${{ env.WORKSPACE }}/${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}_${{ env.builddate }}"
+      - name: "⬡ pack AnyKernel3"
+        if: ${{ steps.config.outputs.useAnykernel == 'true' }}
         run: |
-          if [ -e "${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/Image.gz-dtb" ]; then
-            cp -f ${{ env.OUT_DIR }}/arch/${{ env.arch }}/boot/Image.gz-dtb ./AnyKernel3/
+          builddate=${{ steps.config.outputs.builddate }}
+          arch=${{ steps.generate-args.outputs.ARCH }}
+          anykernel="${{ env.WORKSPACE }}/${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}_$builddate"
+
+          if [ -e "${{ env.OUT_DIR }}/arch/$arch/boot/Image.gz-dtb" ]; then
+            cp -f ${{ env.OUT_DIR }}/arch/$arch/boot/Image.gz-dtb ./AnyKernel3/
           fi
 
           cd AnyKernel3/
-          zip -q -r "${{ env.anykernel }}.zip" *
+          zip -q -r "$anykernel.zip" *
 
-      - name: "[~] Upload AnyKernel3"
+      - name: "↑ upload AnyKernel3"
         uses: actions/upload-artifact@v4
-        if: ${{ env.useAnykernel == 'true' }}
+        if: ${{ steps.config.outputs.useAnykernel == 'true' }}
         with:
-          name: "${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}_${{ env.builddate }}"
+          name: "${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}-${{ steps.config.outputs.builddate }}"
           path: AnyKernel3/*
 
-      - name: "[~] Create GitHub Release"
+      - name: "◈ github release"
         continue-on-error: true
-        uses: softprops/action-gh-release@v1
-        if: ${{ env.useAnykernel == 'true' && env.release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        if: ${{ steps.config.outputs.useAnykernel == 'true' && steps.config.outputs.release == 'true' }}
         with:
-          tag_name: v${{ env.builddate }}.${{ github.run_number }}
-          files: "${{ env.WORKSPACE }}/${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}_${{ env.builddate }}.zip"
+          tag_name: v${{ steps.config.outputs.builddate }}.${{ github.run_number }}
+          files: "${{ env.WORKSPACE }}/${{ env.KERNEL_DEVICE }}-${{ env.KERNEL_NAME }}_${{ steps.config.outputs.builddate }}.zip"
           generate_release_notes: true
