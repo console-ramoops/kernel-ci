@@ -129,13 +129,13 @@ jobs:
 
           curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -
 
-          echo -e "CONFIG_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "CONFIG_HAVE_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
-          echo -e "CONFIG_KPROBE_EVENTS=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
+          #echo -e "CONFIG_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
+          #echo -e "CONFIG_HAVE_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
+          #echo -e "CONFIG_KPROBE_EVENTS=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
 
-          git clone https://github.com/devnoname120/kernelsu-coccinelle
-          ./kernelsu-coccinelle/scope-minimized-hooks/apply.sh .
-          rm -rf ./kernelsu-coccinelle/
+          #git clone https://github.com/devnoname120/kernelsu-coccinelle
+          #./kernelsu-coccinelle/scope-minimized-hooks/apply.sh .
+          #rm -rf ./kernelsu-coccinelle/
 
       - name: "⚙ make defconfig"
         working-directory: ${{ env.KERNEL_NAME }}
