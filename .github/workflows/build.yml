@@ -28,9 +28,16 @@ on:
         default: "patch_download"
         options:
           - "none"
-          - "patch"
           - "download"
           - "patch_download"
+      kernelsu_repo:
+        description: "KernelSU repository URL"
+        required: true
+        default: "https://github.com/rsuntk/KernelSU"
+      kernelsu_branch:
+        description: "KernelSU branch or tag"
+        required: true
+        default: "main"
 
 jobs:
   build-kernel:
@@ -142,11 +149,29 @@ jobs:
             if [ -d "./drivers/kernelsu" ]; then
               rm -rf "./drivers/kernelsu"
             fi
+            if [ -d "./common/drivers/kernelsu" ]; then
+              rm -rf "./common/drivers/kernelsu"
+            fi
 
-            curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -
+            # Clone the custom KernelSU repository and branch
+            git clone --branch "${{ inputs.kernelsu_branch }}" "${{ inputs.kernelsu_repo }}" KernelSU
+
+            # Determine drivers directory
+            if [ -d "common/drivers" ]; then
+              driver_dir="common/drivers"
+            else
+              driver_dir="drivers"
+            fi
+
+            # Symlink
+            ln -sf "$(realpath --relative-to="$driver_dir" "./KernelSU/kernel")" "$driver_dir/kernelsu"
+
+            # Modify Makefile/Kconfig if not already patched
+            grep -q "kernelsu" "$driver_dir/Makefile" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$driver_dir/Makefile"
+            grep -q "source \"drivers/kernelsu/Kconfig\"" "$driver_dir/Kconfig" || sed -i "/endmenu/i\source \"drivers/kernelsu/Kconfig\"" "$driver_dir/Kconfig"
           fi
 
-          if [ "$mode" = "patch" ] || [ "$mode" = "patch_download" ]; then
+          if [ "$mode" = "patch_download" ]; then
             echo -e "CONFIG_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
             echo -e "CONFIG_HAVE_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
             echo -e "CONFIG_KPROBE_EVENTS=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
