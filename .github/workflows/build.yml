@@ -22,10 +22,15 @@ on:
         description: "Defconfig name (e.g. santoni_defconfig)"
         required: true
       withKernelSU:
-        description: "Enable KernelSU patching"
+        description: "KernelSU option"
         required: true
-        type: boolean
-        default: true
+        type: choice
+        default: "patch_download"
+        options:
+          - "none"
+          - "patch"
+          - "download"
+          - "patch_download"
 
 jobs:
   build-kernel:
@@ -49,7 +54,16 @@ jobs:
         run: |
           CONFIG=".github/workflows/repos.json"
           echo "builddate=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
-          echo "withKernelSU=${{ inputs.withKernelSU }}" >> $GITHUB_OUTPUT
+          
+          # Map legacy boolean strings or new choice values
+          val="${{ inputs.withKernelSU }}"
+          if [ "$val" = "true" ]; then
+            val="patch_download"
+          elif [ "$val" = "false" ]; then
+            val="none"
+          fi
+          echo "withKernelSU=$val" >> $GITHUB_OUTPUT
+          
           echo "useAnykernel=$(jq -r '.AnyKernel3.use' $CONFIG)" >> $GITHUB_OUTPUT
           echo "release=$(jq -r '.AnyKernel3.release' $CONFIG)" >> $GITHUB_OUTPUT
 
@@ -116,26 +130,31 @@ jobs:
 
       - name: "⚡ patch KernelSU"
         working-directory: ${{ env.KERNEL_NAME }}
-        if: ${{ steps.config.outputs.withKernelSU == 'true' }}
+        if: ${{ steps.config.outputs.withKernelSU != 'none' }}
         run: |
           arch=${{ steps.generate-args.outputs.ARCH }}
+          mode="${{ steps.config.outputs.withKernelSU }}"
 
-          if [ -d "./KernelSU" ]; then
-            rm -rf "./KernelSU"
+          if [ "$mode" = "download" ] || [ "$mode" = "patch_download" ]; then
+            if [ -d "./KernelSU" ]; then
+              rm -rf "./KernelSU"
+            fi
+            if [ -d "./drivers/kernelsu" ]; then
+              rm -rf "./drivers/kernelsu"
+            fi
+
+            curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -
           fi
-          if [ -d "./drivers/kernelsu" ]; then
-            rm -rf "./drivers/kernelsu"
+
+          if [ "$mode" = "patch" ] || [ "$mode" = "patch_download" ]; then
+            echo -e "CONFIG_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
+            echo -e "CONFIG_HAVE_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
+            echo -e "CONFIG_KPROBE_EVENTS=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
+
+            git clone https://github.com/devnoname120/kernelsu-coccinelle
+            ./kernelsu-coccinelle/scope-minimized-hooks/apply.sh .
+            rm -rf ./kernelsu-coccinelle/
           fi
-
-          curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -
-
-          #echo -e "CONFIG_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
-          #echo -e "CONFIG_HAVE_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
-          #echo -e "CONFIG_KPROBE_EVENTS=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
-
-          #git clone https://github.com/devnoname120/kernelsu-coccinelle
-          #./kernelsu-coccinelle/scope-minimized-hooks/apply.sh .
-          #rm -rf ./kernelsu-coccinelle/
 
       - name: "⚙ make defconfig"
         working-directory: ${{ env.KERNEL_NAME }}
