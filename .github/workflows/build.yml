@@ -43,6 +43,8 @@ jobs:
   build-kernel:
     name: "⚡ Build kernel"
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     env:
       WORKSPACE: ${{ github.workspace }}
       KBUILD_BUILD_USER: "builder"
@@ -156,6 +158,11 @@ jobs:
             # Clone the custom KernelSU repository and branch
             git clone --branch "${{ inputs.kernelsu_branch }}" "${{ inputs.kernelsu_repo }}" KernelSU
 
+            # Fix MODULE_IMPORT_NS compatibility for kernel < 5.4 (e.g. 4.19)
+            if [ -f "KernelSU/kernel/core/init.c" ]; then
+              sed -i '1i #ifndef MODULE_IMPORT_NS\n#define MODULE_IMPORT_NS(ns)\n#endif' KernelSU/kernel/core/init.c
+            fi
+
             # Determine drivers directory
             if [ -d "common/drivers" ]; then
               driver_dir="common/drivers"
@@ -169,16 +176,21 @@ jobs:
             # Modify Makefile/Kconfig if not already patched
             grep -q "kernelsu" "$driver_dir/Makefile" || printf "\nobj-\$(CONFIG_KSU) += kernelsu/\n" >> "$driver_dir/Makefile"
             grep -q "source \"drivers/kernelsu/Kconfig\"" "$driver_dir/Kconfig" || sed -i "/endmenu/i\source \"drivers/kernelsu/Kconfig\"" "$driver_dir/Kconfig"
+
+            # Ensure CONFIG_KSU=y is added to defconfig
+            grep -q "CONFIG_KSU=y" "arch/$arch/configs/${{ env.DEFCONFIG_NAME }}" || echo "CONFIG_KSU=y" >> "arch/$arch/configs/${{ env.DEFCONFIG_NAME }}"
           fi
 
           if [ "$mode" = "patch_download" ]; then
-            echo -e "CONFIG_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
-            echo -e "CONFIG_HAVE_KPROBES=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
-            echo -e "CONFIG_KPROBE_EVENTS=y" >> arch/$arch/configs/${{ env.DEFCONFIG_NAME }}
+            grep -q "CONFIG_KPROBES=y" "arch/$arch/configs/${{ env.DEFCONFIG_NAME }}" || echo "CONFIG_KPROBES=y" >> "arch/$arch/configs/${{ env.DEFCONFIG_NAME }}"
+            grep -q "CONFIG_HAVE_KPROBES=y" "arch/$arch/configs/${{ env.DEFCONFIG_NAME }}" || echo "CONFIG_HAVE_KPROBES=y" >> "arch/$arch/configs/${{ env.DEFCONFIG_NAME }}"
+            grep -q "CONFIG_KPROBE_EVENTS=y" "arch/$arch/configs/${{ env.DEFCONFIG_NAME }}" || echo "CONFIG_KPROBE_EVENTS=y" >> "arch/$arch/configs/${{ env.DEFCONFIG_NAME }}"
 
-            git clone https://github.com/devnoname120/kernelsu-coccinelle
-            ./kernelsu-coccinelle/scope-minimized-hooks/apply.sh .
-            rm -rf ./kernelsu-coccinelle/
+            git clone https://github.com/devnoname120/kernelsu-coccinelle || true
+            if [ -d "./kernelsu-coccinelle" ]; then
+              ./kernelsu-coccinelle/scope-minimized-hooks/apply.sh . || true
+              rm -rf ./kernelsu-coccinelle/
+            fi
           fi
 
       - name: "⚙ make defconfig"
