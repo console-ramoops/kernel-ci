@@ -33,11 +33,11 @@ on:
       kernelsu_repo:
         description: "KernelSU repository URL"
         required: true
-        default: "https://github.com/rsuntk/KernelSU"
+        default: "https://github.com/KernelSU-Next/KernelSU-Next"
       kernelsu_branch:
         description: "KernelSU branch or tag"
         required: true
-        default: "main"
+        default: "legacy"
 
 jobs:
   build-kernel:
