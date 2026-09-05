@@ -45,7 +45,6 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
-      statuses: write
     env:
       WORKSPACE: ${{ github.workspace }}
       KBUILD_BUILD_USER: "builder"
@@ -193,23 +192,6 @@ jobs:
               rm -rf ./kernelsu-coccinelle/
             fi
           fi
-
-      - name: "SSH via tmate"
-        id: tmate
-        uses: mxschmitt/action-tmate@v3
-        with:
-          detached: true
-          limit-access-to-actor: false
-
-      - name: "Publish tmate connection"
-        run: |
-          ssh_cmd="${{ steps.tmate.outputs.ssh-command }}"
-          curl -s -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/statuses/${{ github.sha }} \
-            -d "{\"state\":\"pending\",\"description\":\"$ssh_cmd\",\"context\":\"tmate-ssh\"}"
-          while [ ! -f /tmp/continue ] && [ ! -f /continue ]; do
-            sleep 5
-          done
 
       - name: "⚙ make defconfig"
         working-directory: ${{ env.KERNEL_NAME }}
