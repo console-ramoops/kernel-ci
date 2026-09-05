@@ -196,6 +196,15 @@ jobs:
       - name: "🔧 KernelSU compat fixup"
         working-directory: ${{ env.KERNEL_NAME }}
         run: |
+          f="drivers/kernelsu/hook/syscall_hook.h"
+          if [ -f "$f" ]; then
+            # Upstream only typedefs syscall_fn_t for x86_64; add aarch64 one
+            if grep -q 'typedef sys_call_ptr_t syscall_fn_t;' "$f" && ! grep -q 'defined(__aarch64__)' "$f"; then
+              sed -i 's|^typedef sys_call_ptr_t syscall_fn_t;$|typedef sys_call_ptr_t syscall_fn_t;\n#elif defined(__aarch64__)\n#include <linux/ptrace.h>\ntypedef long (*syscall_fn_t)(const struct pt_regs *regs);|' "$f"
+              echo "Patched $f for aarch64 syscall_fn_t"
+            fi
+          fi
+
           f="drivers/kernelsu/feature/selinux_hide.c"
           if [ -f "$f" ]; then
             # Fix 4-arg security_context_to_sid calls for kernels with selinux_state backport
