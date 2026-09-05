@@ -193,6 +193,20 @@ jobs:
             fi
           fi
 
+      - name: "🔧 KernelSU compat fixup"
+        working-directory: ${{ env.KERNEL_NAME }}
+        run: |
+          f="drivers/kernelsu/feature/selinux_hide.c"
+          if [ -f "$f" ]; then
+            # Fix 4-arg security_context_to_sid calls for kernels with selinux_state backport
+            if grep -q 'int security_context_to_sid(struct selinux_state' security/selinux/include/security.h 2>/dev/null; then
+              sed -i '/LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)/,/#else/{
+                s/security_context_to_sid("\([^"]*\)"/security_context_to_sid(\&selinux_state, "\1"/g
+              }' "$f"
+              echo "Patched $f for selinux_state compat"
+            fi
+          fi
+
       - name: "⚙ make defconfig"
         working-directory: ${{ env.KERNEL_NAME }}
         run: |
