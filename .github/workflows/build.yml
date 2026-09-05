@@ -216,6 +216,15 @@ jobs:
             fi
           fi
 
+          # linux/compiler_types.h only exists on newer kernels; on 4.9 its
+          # contents live in compiler.h, so drop the include if header is absent
+          if [ ! -f "include/linux/compiler_types.h" ]; then
+            grep -rl 'linux/compiler_types.h' drivers/kernelsu/ 2>/dev/null | while read -r hf; do
+              sed -i '/#include <linux\/compiler_types.h>/d' "$hf"
+              echo "Dropped compiler_types.h include from $hf"
+            done
+          fi
+
       - name: "⚙ make defconfig"
         working-directory: ${{ env.KERNEL_NAME }}
         run: |
