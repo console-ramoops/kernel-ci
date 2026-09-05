@@ -216,12 +216,38 @@ jobs:
             fi
           fi
 
+          # Map newer-kernel headers to 4.9 equivalents when absent
+          ksu_fix_include() {
+            if [ ! -f "include/$1" ] && [ -f "include/$2" ]; then
+              grep -rl "#include <$1>" drivers/kernelsu/ 2>/dev/null | while read -r hf; do
+                sed -i "s|#include <$1>|#include <$2>|" "$hf"
+                echo "Mapped $1 -> $2 in $hf"
+              done
+            fi
+          }
+          ksu_fix_include linux/pgtable.h asm/pgtable.h
+          ksu_fix_include linux/sched/task_stack.h linux/sched.h
+          ksu_fix_include linux/sched/signal.h linux/sched.h
+          ksu_fix_include linux/sched/task.h linux/sched.h
+          ksu_fix_include linux/sched/user.h linux/sched.h
+          ksu_fix_include linux/minmax.h linux/kernel.h
+          ksu_fix_include linux/limits.h uapi/linux/limits.h
+          ksu_fix_include linux/hex.h linux/kernel.h
+          ksu_fix_include crypto/sha2.h crypto/sha.h
+          ksu_fix_include linux/input-event-codes.h linux/input.h
           # linux/compiler_types.h only exists on newer kernels; on 4.9 its
           # contents live in compiler.h, so drop the include if header is absent
           if [ ! -f "include/linux/compiler_types.h" ]; then
             grep -rl 'linux/compiler_types.h' drivers/kernelsu/ 2>/dev/null | while read -r hf; do
               sed -i '/#include <linux\/compiler_types.h>/d' "$hf"
               echo "Dropped compiler_types.h include from $hf"
+            done
+          fi
+          # uapi/linux/mount.h is unused by KSU; drop if kernel lacks it
+          if [ ! -f "include/uapi/linux/mount.h" ]; then
+            grep -rl 'uapi/linux/mount.h' drivers/kernelsu/ 2>/dev/null | while read -r hf; do
+              sed -i '/#include <uapi\/linux\/mount.h>/d' "$hf"
+              echo "Dropped uapi/linux/mount.h include from $hf"
             done
           fi
 
