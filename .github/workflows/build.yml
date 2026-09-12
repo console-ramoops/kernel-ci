@@ -79,7 +79,7 @@ jobs:
       - name: "✦ install deps"
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc libssl-dev libfl-dev bison flex libarchive-tools zip
+          sudo apt-get install -y bc libssl-dev libfl-dev bison flex libarchive-tools zip libelf-dev zlib1g-dev
 
       - name: "✦ clone anykernel3"
         run: |
