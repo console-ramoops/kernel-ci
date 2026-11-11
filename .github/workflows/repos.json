@@ -4,7 +4,9 @@
       "repo": "https://gitlab.com/clangsantoni/zyc_clang",
       "branch": "14",
       "name": "zyc_clang",
-      "binPath": ["bin"]
+      "binPath": [
+        "bin"
+      ]
     }
   ],
   "params": {
@@ -17,8 +19,8 @@
     }
   },
   "AnyKernel3": {
-    "use": true,
-    "release": true,
+    "use": false,
+    "release": false,
     "repo": "https://github.com/console-ramoops/AnyKernel3",
     "branch": "master"
   }

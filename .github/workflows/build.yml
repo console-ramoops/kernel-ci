@@ -82,6 +82,7 @@ jobs:
           sudo apt-get install -y bc libssl-dev libfl-dev bison flex libarchive-tools zip libelf-dev zlib1g-dev
 
       - name: "✦ clone anykernel3"
+        if: ${{ steps.config.outputs.useAnykernel == 'true' }}
         run: |
           CONFIG=".github/workflows/repos.json"
           ANYKERNEL_REPO=$(jq -r '.AnyKernel3.repo' $CONFIG)
@@ -201,7 +202,31 @@ jobs:
       - name: "⚒ compile kernel"
         working-directory: ${{ env.KERNEL_NAME }}
         run: |
-          make ${{ steps.generate-args.outputs.args }}
+          make ${{ steps.generate-args.outputs.args }} 2>&1 | tee "$OUT_DIR/build.log"
+          test -s "$OUT_DIR/arch/arm64/boot/Image.gz-dtb"
+
+      - name: "↑ upload recovery kernel and matching modules"
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-kernel-${{ env.KERNEL_DEVICE }}-${{ github.run_id }}
+          path: |
+            ${{ env.OUT_DIR }}/arch/arm64/boot/Image.gz-dtb
+            ${{ env.OUT_DIR }}/**/*.ko
+            ${{ env.OUT_DIR }}/Module.symvers
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: "↑ upload build diagnostics"
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-diagnostics-${{ github.run_id }}
+          path: |
+            ${{ env.OUT_DIR }}/.config
+            ${{ env.OUT_DIR }}/build.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: "↑ upload Image"
         uses: actions/upload-artifact@v4
